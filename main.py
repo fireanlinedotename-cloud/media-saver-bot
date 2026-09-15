@@ -7,6 +7,39 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# 💰 Твоя реферальная/партнерская ссылка Linkni для монетизации
+# Замени на свою реальную ссылку с сервиса
+LINKNI_URL = "https://telegram.me/linknibot/app?startapp=x_2z50t"
+
+def get_cobalt_video(url):
+    instances = [
+        "https://cobalt-api.kwiatekmom.tokyo",
+        "https://api.cobalt.7777777.xyz",
+        "https://cobalt-backend.jcloud.ik-server.com"
+    ]
+    payload = {"url": url, "videoQuality": "720"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    
+    for instance in instances:
+        try:
+            res = requests.post(instance, json=payload, headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") in ["tunnel", "redirect"]:
+                    return data.get("url")
+        except Exception:
+            continue
+    return None
+
+def get_tiktok_video(url):
+    try:
+        res = requests.post("https://www.tikwm.com/api/", data={"url": url}, timeout=10).json()
+        if res.get("code") == 0:
+            return res["data"]["play"]
+    except Exception:
+        pass
+    return None
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(
@@ -31,79 +64,73 @@ def handle_message(message):
     url = urls[0]
     status_msg = bot.reply_to(message, "⏳ Обрабатываю ссылку...")
 
+    direct_url = None
+
+    if "tiktok.com" in url:
+        direct_url = get_tiktok_video(url)
+    
+    if not direct_url:
+        direct_url = get_cobalt_video(url)
+
+    if not direct_url:
+        bot.edit_message_text("❌ Не удалось получить ссылку на скачивание. Попробуйте позже.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        return
+
+    file_size_mb = 0
     try:
-        payload = {
-            "url": url,
-            "videoQuality": "720"
-        }
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+        head_resp = requests.head(direct_url, allow_redirects=True, timeout=5)
+        content_length = head_resp.headers.get('Content-Length')
+        if content_length:
+            file_size_mb = int(content_length) / (1024 * 1024)
+    except Exception:
+        pass
+
+    # Создаем кнопку монетизации Linkni
+    monetization_button = InlineKeyboardButton("🎁 Поддержать бота / Монетизация", url=LINKNI_URL)
+
+    # Если видео больше 50 МБ — выдаем прямую кнопку скачивания + кнопку Linkni
+    if file_size_mb > 50:
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
+            monetization_button
+        )
         
-        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=20)
-        data = response.json()
-
-        status = data.get("status")
-
-        if status in ["tunnel", "redirect"]:
-            video_url = data.get("url")
+        bot.edit_message_text(
+            f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
+            f"Telegram не позволяет ботам отправлять файлы больше 50 МБ.\n"
+            f"Вы можете скачать его напрямую по кнопке ниже:",
+            chat_id=status_msg.chat.id, 
+            message_id=status_msg.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    else:
+        bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        try:
+            # Прикрепляем к видео кнопку монетизации
+            markup = InlineKeyboardMarkup()
+            markup.add(monetization_button)
             
-            # Проверяем размер файла с помощью HEAD-запроса
-            file_size_mb = 0
-            try:
-                head_resp = requests.head(video_url, allow_redirects=True, timeout=5)
-                content_length = head_resp.headers.get('Content-Length')
-                if content_length:
-                    file_size_mb = int(content_length) / (1024 * 1024)
-            except Exception:
-                pass
-
-            # Если размер больше 50 МБ (или не удалось точно узнать размер большой ссылки)
-            if file_size_mb > 50:
-                markup = InlineKeyboardMarkup()
-                markup.add(InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=video_url))
-                
-                bot.edit_message_text(
-                    f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
-                    f"Telegram не позволяет ботам отправлять файлы больше 50 МБ.\n"
-                    f"Вы можете скачать его напрямую по кнопке ниже:",
-                    chat_id=status_msg.chat.id, 
-                    message_id=status_msg.message_id,
-                    reply_markup=markup,
-                    parse_mode="Markdown"
-                )
-            else:
-                bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-                try:
-                    bot.send_video(message.chat.id, video_url)
-                    bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-                except Exception:
-                    # Если отправка через Telegram все же сорвалась из-за размера
-                    markup = InlineKeyboardMarkup()
-                    markup.add(InlineKeyboardButton("🌐 Скачать файл", url=video_url))
-                    bot.edit_message_text(
-                        "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
-                        chat_id=status_msg.chat.id,
-                        message_id=status_msg.message_id,
-                        reply_markup=markup
-                    )
-
-        elif status == "picker":
-            bot.edit_message_text("📥 Отправляю медиа...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-            for item in data.get("picker", [])[:5]:
-                if item.get("type") == "photo":
-                    bot.send_photo(message.chat.id, item.get("url"))
-                else:
-                    bot.send_video(message.chat.id, item.get("url"))
+            bot.send_video(
+                message.chat.id, 
+                direct_url, 
+                caption="✅ Ваше видео успешно скачано!",
+                reply_markup=markup
+            )
             bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-
-        else:
-            error_text = data.get("text", "Не удалось получить ссылку на видео.")
-            bot.edit_message_text(f"❌ Ошибка: {error_text}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-
-    except Exception as e:
-        bot.edit_message_text(f"❌ Произошла ошибка при скачивании: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        except Exception:
+            markup = InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
+                monetization_button
+            )
+            bot.edit_message_text(
+                "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
+                chat_id=status_msg.chat.id,
+                message_id=status_msg.message_id,
+                reply_markup=markup
+            )
 
 if __name__ == "__main__":
     bot.infinity_polling()
