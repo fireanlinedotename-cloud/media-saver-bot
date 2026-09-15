@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from yt_dlp import YoutubeDL
 
-# 1. Запускаем минимальный веб-сервер, чтобы Render Free Web Service не вылетал по таймауту портов
+# 1. Минимальный веб-сервер для прохождения проверки порта на Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -16,10 +16,9 @@ def run_web_server():
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# Запускаем веб-сервер в отдельном потоке
 threading.Thread(target=run_web_server, daemon=True).start()
 
-# 2. Основная логика Telegram-бота
+# 2. Логика Telegram-бота
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
@@ -57,7 +56,7 @@ def download_video(message):
         "Подключаюсь к серверу и начинаю скачивание видеоролика. Пожалуйста, подождите..."
     )
     
-        ydl_opts = {
+    ydl_opts = {
         'format': 'best[filesize<50M]/best',
         'outtmpl': 'video_%(id)s.%(ext)s',
         'quiet': True,
@@ -65,7 +64,6 @@ def download_video(message):
         'referer': 'https://www.tiktok.com/',
         'nocheckcertificate': True,
     }
-
     
     filepath = None
     try:
