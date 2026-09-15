@@ -1,3 +1,56 @@
+import os
+import re
+import requests
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# 💰 Партнёрская ссылка Linkni для монетизации
+LINKNI_URL = "https://telegram.me/linknibot/app?startapp=x_2z50t"
+
+def get_cobalt_video(url):
+    instances = [
+        "https://cobalt-api.kwiatekmom.tokyo",
+        "https://api.cobalt.7777777.xyz",
+        "https://cobalt-backend.jcloud.ik-server.com"
+    ]
+    payload = {"url": url, "videoQuality": "720"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    
+    for instance in instances:
+        try:
+            res = requests.post(instance, json=payload, headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") in ["tunnel", "redirect"]:
+                    return data.get("url")
+        except Exception:
+            continue
+    return None
+
+def get_tiktok_video(url):
+    try:
+        res = requests.post("https://www.tikwm.com/api/", data={"url": url}, timeout=10).json()
+        if res.get("code") == 0:
+            return res["data"]["play"]
+    except Exception:
+        pass
+    return None
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(
+        message, 
+        "👋 Привет! Я твой персональный загрузчик видео.\n\n"
+        "📌 Поддерживаемые площадки:\n"
+        "• TikTok\n"
+        "• VK (Видео и Клипы)\n"
+        "• YouTube (Shorts и обычные видео)\n\n"
+        "👇 Просто скопируй и отправь мне ссылку на видео прямо сюда!"
+    )
+
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     url_pattern = r'https?://[^\s]+'
@@ -89,3 +142,6 @@ def handle_message(message):
                 "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
                 reply_markup=markup
             )
+
+if __name__ == "__main__":
+    bot.infinity_polling()
