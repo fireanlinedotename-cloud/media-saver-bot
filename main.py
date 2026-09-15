@@ -136,11 +136,50 @@ def handle_message(message):
             markup = InlineKeyboardMarkup()
             markup.add(monetization_button)
 
-            if file_size_mb > 50:
-                bot.edit_message_text(
-                    f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\nTelegram не пропускает файлы больше 50 МБ.",
-                    chat_id=status_msg.chat.id, message_id=status_msg.message_id
-                )
+            # МОМЕНТАЛЬНАЯ ПРОВЕРКА РАЗМЕРА (> 50 МБ)
+    if file_size_mb > 50:
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
+            monetization_button
+        )
+        bot.edit_message_text(
+            f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
+            f"Telegram разрешает отправлять ботам файлы только до 50 МБ.\n"
+            f"Вы можете скачать его напрямую по кнопке ниже:",
+            chat_id=status_msg.chat.id, 
+            message_id=status_msg.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        return
+
+    # Если файл меньше 50 МБ, отправляем его
+    bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+    markup = InlineKeyboardMarkup()
+    markup.add(monetization_button)
+
+    try:
+        bot.send_video(
+            message.chat.id, 
+            direct_url, 
+            caption="✅ Ваше видео успешно скачано!",
+            reply_markup=markup
+        )
+        # Аккуратно удаляем старое статусное сообщение без всяких кривых конструкций
+        bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+    except Exception:
+        # Резервный вариант, если Telegram не смог подтянуть по прямой ссылке
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
+            monetization_button
+        )
+        bot.send_message(
+            message.chat.id,
+            "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
+            reply_markup=markup
+        )
             else:
                 bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
                 with open(file_path, 'rb') as video_file:
