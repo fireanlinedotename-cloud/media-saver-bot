@@ -41,7 +41,7 @@ def get_tiktok_video(url):
     return None
 
 def get_vk_direct_link_via_cobalt(url):
-    """Моментально достает прямую ссылку и размер через Cobalt API (без скачивания на сервер)"""
+    """Моментально достает прямую ссылку через Cobalt API (без скачивания на сервер)"""
     instances = [
         "https://co.wuk.sh",
         "https://api.cobalt.7777777.xyz",
@@ -122,12 +122,11 @@ def handle_message(message):
     if "tiktok.com" in url:
         direct_url = get_tiktok_video(url)
     
-    # 2. VK Видео (сначала ищем прямую ссылку через быстрый метод)
+    # 2. VK Видео
     elif "vk.com" in url or "vkvideo.ru" in url:
         direct_url = get_vk_direct_link_via_cobalt(url)
 
     if not direct_url and ("vk.com" in url or "vkvideo.ru" in url):
-        # Если быстрый метод не сработал на VK, пробуем локальный yt-dlp с предупреждением
         bot.edit_message_text("📥 Большое видео, скачиваю на сервер...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
         file_path = download_vk_video_locally(url, f"vk_{message.chat.id}.mp4")
         
@@ -136,50 +135,11 @@ def handle_message(message):
             markup = InlineKeyboardMarkup()
             markup.add(monetization_button)
 
-            # МОМЕНТАЛЬНАЯ ПРОВЕРКА РАЗМЕРА (> 50 МБ)
-    if file_size_mb > 50:
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
-            monetization_button
-        )
-        bot.edit_message_text(
-            f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
-            f"Telegram разрешает отправлять ботам файлы только до 50 МБ.\n"
-            f"Вы можете скачать его напрямую по кнопке ниже:",
-            chat_id=status_msg.chat.id, 
-            message_id=status_msg.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        return
-
-    # Если файл меньше 50 МБ, отправляем его
-    bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-    markup = InlineKeyboardMarkup()
-    markup.add(monetization_button)
-
-    try:
-        bot.send_video(
-            message.chat.id, 
-            direct_url, 
-            caption="✅ Ваше видео успешно скачано!",
-            reply_markup=markup
-        )
-        # Аккуратно удаляем старое статусное сообщение без всяких кривых конструкций
-        bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-    except Exception:
-        # Резервный вариант, если Telegram не смог подтянуть по прямой ссылке
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
-            monetization_button
-        )
-        bot.send_message(
-            message.chat.id,
-            "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
-            reply_markup=markup
-        )
+            if file_size_mb > 50:
+                bot.edit_message_text(
+                    f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\nTelegram не пропускает файлы больше 50 МБ.",
+                    chat_id=status_msg.chat.id, message_id=status_msg.message_id
+                )
             else:
                 bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
                 with open(file_path, 'rb') as video_file:
@@ -197,7 +157,6 @@ def handle_message(message):
         bot.edit_message_text("❌ Не удалось получить ссылку на скачивание.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
         return
 
-    # Быстрая проверка размера по заголовкам прямой ссылки ДО скачивания
     try:
         head_resp = requests.head(direct_url, allow_redirects=True, timeout=5)
         content_length = head_resp.headers.get('Content-Length')
@@ -206,7 +165,6 @@ def handle_message(message):
     except Exception:
         pass
 
-    # МОМЕНТАЛЬНАЯ ПРОВЕРКА РАЗМЕРА (> 50 МБ)
     if file_size_mb > 50:
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
@@ -224,7 +182,6 @@ def handle_message(message):
         )
         return
 
-    # Если файл меньше 50 МБ, отправляем его
     bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
     markup = InlineKeyboardMarkup()
     markup.add(monetization_button)
@@ -236,9 +193,8 @@ def handle_message(message):
             caption="✅ Ваше видео успешно скачано!",
             reply_markup=markup
         )
-        bot.delete_message(chat_id=status_ops := status_msg.chat.id, message_id=status_msg.message_id)
+        bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
     except Exception:
-        # Резервный вариант, если Telegram не смог подтянуть по прямой ссылке
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
             InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
