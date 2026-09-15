@@ -57,11 +57,15 @@ def download_video(message):
         "Подключаюсь к серверу и начинаю скачивание видеоролика. Пожалуйста, подождите..."
     )
     
-    ydl_opts = {
+        ydl_opts = {
         'format': 'best[filesize<50M]/best',
         'outtmpl': 'video_%(id)s.%(ext)s',
-        'quiet': True
+        'quiet': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'referer': 'https://www.tiktok.com/',
+        'nocheckcertificate': True,
     }
+
     
     filepath = None
     try:
