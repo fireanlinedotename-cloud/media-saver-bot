@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from yt_dlp import YoutubeDL
 
-# 1. Минимальный веб-сервер для прохождения проверки порта на Render
+# 1. Веб-сервер для прохождения проверки портов на Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
