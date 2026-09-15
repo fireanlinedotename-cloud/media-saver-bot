@@ -1,33 +1,45 @@
 import os
 import re
+import threading
 import requests
 import telebot
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 💰 Партнёрская ссылка Linkni для монетизации
+# 💰 Партнёрская ссылка Linkni
 LINKNI_URL = "https://telegram.me/linknibot/app?startapp=x_2z50t"
 
-def get_cobalt_video(url):
-    instances = [
-        "https://cobalt-api.kwiatekmom.tokyo",
-        "https://api.cobalt.7777777.xyz",
-        "https://cobalt-backend.jcloud.ik-server.com"
-    ]
-    payload = {"url": url, "videoQuality": "720"}
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    
-    for instance in instances:
-        try:
-            res = requests.post(instance, json=payload, headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("status") in ["tunnel", "redirect"]:
-                    return data.get("url")
-        except Exception:
-            continue
+# --- МИНИ-СЕРВЕР ДЛЯ RENDER (чтобы не ругался на порты) ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+# Запускаем веб-сервер в отдельном потоке, чтобы он не мешал боту
+threading.Thread(target=run_web_server, daemon=True).start()
+# ---------------------------------------------------------
+
+def get_vk_video(url):
+    try:
+        api_url = f"https://api.vkr.com.co/vk/video?url={url}"
+        res = requests.get(api_url, timeout=10).json()
+        if res.get("status") == True and "url" in res:
+            return res.get("url")
+        
+        res2 = requests.get(f"https://dl.vkr.com.co/api/vk?url={url}", timeout=10).json()
+        if "data" in res2 and "url" in res2["data"]:
+            return res2["data"]["url"]
+    except Exception:
+        pass
     return None
 
 def get_tiktok_video(url):
@@ -37,6 +49,27 @@ def get_tiktok_video(url):
             return res["data"]["play"]
     except Exception:
         pass
+    return None
+
+def get_cobalt_video(url):
+    instances = [
+        "https://api.cobalt.7777777.xyz",
+        "https://cobalt-api.kwiatekmom.tokyo",
+        "https://cobalt-backend.jcloud.ik-server.com",
+        "https://co.wuk.sh"
+    ]
+    payload = {"url": url, "videoQuality": "720"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    
+    for instance in instances:
+        try:
+            res = requests.post(instance, json=payload, headers=headers, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") in ["tunnel", "redirect"]:
+                    return data.get("url")
+        except Exception:
+            continue
     return None
 
 @bot.message_handler(commands=['start'])
@@ -69,7 +102,9 @@ def handle_message(message):
 
     direct_url = None
 
-    if "tiktok.com" in url:
+    if "vk.com" in url or "vkvideo.ru" in url:
+        direct_url = get_vk_video(url)
+    elif "tiktok.com" in url:
         direct_url = get_tiktok_video(url)
     
     if not direct_url:
