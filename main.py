@@ -1,105 +1,109 @@
 import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
+import requests
 import telebot
-from yt_dlp import YoutubeDL
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# 1. Веб-сервер для прохождения проверки портов на Render
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_web_server, daemon=True).start()
-
-# 2. Логика Telegram-бота
-TOKEN = os.environ.get("BOT_TOKEN")
-bot = telebot.TeleBot(TOKEN)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
 @bot.message_handler(commands=['start'])
-def start_message(message):
-    text = (
-        "👋 **Привет! Я твой персональный загрузчик видео.**\n\n"
-        "Я могу быстро и в хорошем качестве скачать видеоролик без водяных знаков.\n\n"
-        "📌 **Поддерживаемые площадки:**\n"
+def send_welcome(message):
+    bot.reply_to(
+        message, 
+        "👋 Привет! Я твой персональный загрузчик видео.\n\n"
+        "📌 Поддерживаемые площадки:\n"
         "• TikTok\n"
         "• VK (Видео и Клипы)\n"
         "• YouTube (Shorts и обычные видео)\n\n"
-        "👇 **Просто скопируй и отправь мне ссылку на видео прямо сюда!**"
+        "👇 Просто скопируй и отправь мне ссылку на видео прямо сюда!"
     )
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-@bot.message_handler(commands=['help'])
-def help_message(message):
-    text = (
-        "❓ **Инструкция по скачиванию:**\n\n"
-        "1. Открой приложение (TikTok, VK или YouTube).\n"
-        "2. Нажми «Поделиться» ➔ «Скопировать ссылку».\n"
-        "3. Вставь ссылку в этот чат и отправь сообщение.\n"
-        "4. Дождись завершения обработки и забирай готовый файл!"
-    )
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    url_pattern = r'https?://[^\s]+'
+    urls = re.findall(url_pattern, message.text)
+    
+    if not urls:
+        bot.reply_to(message, "Пожалуйста, отправьте корректную ссылку на видео.")
+        return
 
-@bot.message_handler(func=lambda message: message.text and ("http://" in message.text or "https://" in message.text))
-def download_video(message):
-    url = message.text.strip()
-    
-    status_msg = bot.reply_to(
-        message, 
-        "⚙️ **Принял ссылку в обработку!**\n"
-        "Подключаюсь к серверу и начинаю скачивание видеоролика. Пожалуйста, подождите..."
-    )
-    
-    ydl_opts = {
-        'format': 'best[filesize<50M]/best',
-        'outtmpl': 'video_%(id)s.%(ext)s',
-        'quiet': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'referer': 'https://www.tiktok.com/',
-        'nocheckcertificate': True,
-    }
-    
-    filepath = None
+    url = urls[0]
+    status_msg = bot.reply_to(message, "⏳ Обрабатываю ссылку...")
+
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filepath = ydl.prepare_filename(info)
+        payload = {
+            "url": url,
+            "videoQuality": "720"
+        }
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
         
-        bot.edit_message_text(
-            "⏳ **Видео успешно загружено на сервер!**\n"
-            "Почти готово: сжимаем файл и отправляем его прямо в этот чат...",
-            chat_id=message.chat.id,
-            message_id=status_msg.message_id
-        )
-        
-        with open(filepath, 'rb') as video:
-            bot.send_video(
-                message.chat.id, 
-                video, 
-                caption="✅ **Ваше видео успешно скачано!**\nПриятного просмотра 🚀",
-                reply_to_message_id=message.message_id,
-                parse_mode="Markdown"
-            )
-        
-        bot.delete_message(message.chat.id, status_msg.message_id)
-        
-    except Exception as e:
-        bot.edit_message_text(
-            f"❌ **Произошла ошибка при скачивании:**\n`{str(e)[:150]}`\n\nПроверьте корректность ссылки и попробуйте ещё раз.",
-            chat_id=message.chat.id,
-            message_id=status_msg.message_id,
-            parse_mode="Markdown"
-        )
-    
-    finally:
-        if filepath and os.path.exists(filepath):
-            os.remove(filepath)
+        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=20)
+        data = response.json()
 
-print("Бот запущен...")
-bot.infinity_polling()
+        status = data.get("status")
+
+        if status in ["tunnel", "redirect"]:
+            video_url = data.get("url")
+            
+            # Проверяем размер файла с помощью HEAD-запроса
+            file_size_mb = 0
+            try:
+                head_resp = requests.head(video_url, allow_redirects=True, timeout=5)
+                content_length = head_resp.headers.get('Content-Length')
+                if content_length:
+                    file_size_mb = int(content_length) / (1024 * 1024)
+            except Exception:
+                pass
+
+            # Если размер больше 50 МБ (или не удалось точно узнать размер большой ссылки)
+            if file_size_mb > 50:
+                markup = InlineKeyboardMarkup()
+                markup.add(InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=video_url))
+                
+                bot.edit_message_text(
+                    f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
+                    f"Telegram не позволяет ботам отправлять файлы больше 50 МБ.\n"
+                    f"Вы можете скачать его напрямую по кнопке ниже:",
+                    chat_id=status_msg.chat.id, 
+                    message_id=status_msg.message_id,
+                    reply_markup=markup,
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+                try:
+                    bot.send_video(message.chat.id, video_url)
+                    bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+                except Exception:
+                    # Если отправка через Telegram все же сорвалась из-за размера
+                    markup = InlineKeyboardMarkup()
+                    markup.add(InlineKeyboardButton("🌐 Скачать файл", url=video_url))
+                    bot.edit_message_text(
+                        "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
+                        chat_id=status_msg.chat.id,
+                        message_id=status_msg.message_id,
+                        reply_markup=markup
+                    )
+
+        elif status == "picker":
+            bot.edit_message_text("📥 Отправляю медиа...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+            for item in data.get("picker", [])[:5]:
+                if item.get("type") == "photo":
+                    bot.send_photo(message.chat.id, item.get("url"))
+                else:
+                    bot.send_video(message.chat.id, item.get("url"))
+            bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+
+        else:
+            error_text = data.get("text", "Не удалось получить ссылку на видео.")
+            bot.edit_message_text(f"❌ Ошибка: {error_text}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Произошла ошибка при скачивании: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+
+if __name__ == "__main__":
+    bot.infinity_polling()
