@@ -38,61 +38,33 @@ def get_tiktok_video(url):
         pass
     return None, None
 
-def get_vk_direct_link_via_cobalt(url):
-    """Достает прямую ссылку через Cobalt API"""
-    instances = [
-        "https://co.wuk.sh",
-        "https://api.cobalt.7777777.xyz",
-        "https://cobalt.api.kwiatekmom.tokyo",
-        "https://dl.cobalt.best"
-    ]
-    payload = {"url": url, "videoQuality": "720"}
-    headers = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-    
-    for instance in instances:
-        try:
-            res = requests.post(f"{instance}/api/json", json=payload, headers=headers, timeout=6)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("status") in ["tunnel", "redirect"]:
-                    return data.get("url")
-                elif data.get("status") == "picker" and data.get("picker"):
-                    return data["picker"][0].get("url")
-        except Exception:
-            continue
-    return None
-
-def download_media_locally(url, output_filename="video.mp4", extract_audio=False):
-    """Загрузка или конвертация в MP3 через yt-dlp"""
-    if os.path.exists(output_filename):
-        try:
-            os.remove(output_filename)
-        except Exception:
-            pass
-            
+def get_vk_info_safely(url):
+    """Быстро получает прямую ссылку и размер через yt-dlp без скачивания файла на диск"""
     command = [
         "yt-dlp",
-        "-o", output_filename.replace('.mp3', '.%(ext)s'),
+        "--get-url",
+        "--print", "filesize",
+        "-f", "best[ext=mp4]/best",
         "--no-playlist",
         url
     ]
-    
-    if extract_audio:
-        command.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
-    else:
-        command.extend(["-f", "best[ext=mp4]/best"])
-
     try:
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-        # Ищем файл с правильным расширением после работы yt-dlp
-        base_name = output_filename.rsplit('.', 1)[0]
-        for ext in ['.mp4', '.mp3', '.m4a', '.webm']:
-            full_path = base_name + ext
-            if os.path.exists(full_path):
-                return full_path
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            if len(lines) >= 2:
+                file_size_bytes = lines[0].strip()
+                direct_url = lines[1].strip()
+                
+                size_mb = 0
+                if file_size_bytes.isdigit():
+                    size_mb = int(file_size_bytes) / (1024 * 1024)
+                return direct_url, size_mb
+            elif len(lines) == 1 and lines[0].startswith('http'):
+                return lines[0].strip(), 0
     except Exception:
         pass
-    return None
+    return None, 0
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -134,95 +106,101 @@ def handle_message(message):
     # 1. TikTok
     if "tiktok.com" in url:
         direct_url, tiktok_audio_url = get_tiktok_video(url)
-    
+        
+        if not direct_url:
+            bot.edit_message_text("❌ Не удалось получить ссылку на TikTok видео.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+            return
+
+        try:
+            head_resp = requests.head(direct_url, allow_redirects=True, timeout=5)
+            content_length = head_resp.headers.get('Content-Length')
+            if content_length:
+                file_size_mb = int(content_length) / (1024 * 1024)
+        except Exception:
+            pass
+
+        markup = InlineKeyboardMarkup(row_width=1)
+        if file_size_mb > 50:
+            markup.add(
+                InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
+                share_button,
+                monetization_button
+            )
+            bot.edit_message_text(
+                f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
+                f"Telegram разрешает отправлять ботам файлы только до 50 МБ.\n"
+                f"Вы можете скачать его напрямую по кнопке ниже:",
+                chat_id=status_msg.chat.id, 
+                message_id=status_msg.message_id,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+            return
+
+        bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        if tiktok_audio_url:
+            markup.add(InlineKeyboardButton("🎵 Скачать аудио (MP3)", url=tiktok_audio_url))
+        markup.add(share_button, monetization_button)
+
+        try:
+            bot.send_video(message.chat.id, direct_url, caption="✅ Ваше видео успешно скачано!", reply_markup=markup)
+            bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        except Exception:
+            bot.send_message(message.chat.id, "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:", reply_markup=markup)
+        return
+
     # 2. VK Видео
     elif "vk.com" in url or "vkvideo.ru" in url:
-        direct_url = get_vk_direct_link_via_cobalt(url)
-
-    if not direct_url and ("vk.com" in url or "vkvideo.ru" in url):
-        bot.edit_message_text("📥 Большое видео, обрабатываю...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-        file_path = download_media_locally(url, f"vk_{message.chat.id}.mp4")
+        bot.edit_message_text("⏳ Анализирую видео из VK...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        direct_url, file_size_mb = get_vk_info_safely(url)
         
-        if file_path and os.path.exists(file_path):
-            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(share_button, monetization_button)
-
-            if file_size_mb > 50:
-                bot.edit_message_text(
-                    f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\nTelegram не пропускает файлы больше 50 МБ.",
-                    chat_id=status_msg.chat.id, message_id=status_msg.message_id
-                )
-            else:
-                bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-                with open(file_path, 'rb') as video_file:
-                    bot.send_video(message.chat.id, video_file, caption="✅ Готово!", reply_markup=markup)
-                bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-            
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return
-        else:
-            bot.edit_message_text("❌ Не удалось обработать это видео из VK.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        if not direct_url:
+            bot.edit_message_text("❌ Не удалось получить ссылку из VK. Возможно, видео защищено.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
             return
 
-    if not direct_url:
-        bot.edit_message_text("❌ Не удалось получить ссылку на скачивание.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(share_button, monetization_button)
+
+        if file_size_mb > 50 or file_size_mb == 0:
+            size_text = f" ({file_size_mb:.1f} МБ)" if file_size_mb > 0 else ""
+            markup_browser = InlineKeyboardMarkup(row_width=1)
+            markup_browser.add(
+                InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
+                share_button,
+                monetization_button
+            )
+            bot.edit_message_text(
+                f"⚠️ **Видео из VK слишком большое{size_text}!**\n\n"
+                f"Telegram разрешает отправлять ботам файлы только до 50 МБ.\n"
+                f"Вы можете скачать его напрямую по кнопке ниже:",
+                chat_id=status_msg.chat.id, 
+                message_id=status_msg.message_id,
+                reply_markup=markup_browser,
+                parse_mode="Markdown"
+            )
+            return
+
+        bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        try:
+            bot.send_video(message.chat.id, direct_url, caption="✅ Ваше видео из VK успешно скачано!", reply_markup=markup)
+            bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        except Exception:
+            markup_browser = InlineKeyboardMarkup(row_width=1)
+            markup_browser.add(
+                InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
+                share_button,
+                monetization_button
+            )
+            bot.edit_message_text(
+                "⚠️ Не удалось отправить файл напрямую в Telegram. Скачайте его по ссылке:",
+                chat_id=status_msg.chat.id,
+                message_id=status_msg.message_id,
+                reply_markup=markup_browser
+            )
         return
 
-    try:
-        head_resp = requests.head(direct_url, allow_redirects=True, timeout=5)
-        content_length = head_resp.headers.get('Content-Length')
-        if content_length:
-            file_size_mb = int(content_length) / (1024 * 1024)
-    except Exception:
-        pass
-
-    if file_size_mb > 50:
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🌐 Скачать видео (Браузер)", url=direct_url),
-            share_button,
-            monetization_button
-        )
-        bot.edit_message_text(
-            f"⚠️ **Видео слишком большое ({file_size_mb:.1f} МБ)!**\n\n"
-            f"Telegram разрешает отправлять ботам файлы только до 50 МБ.\n"
-            f"Вы можете скачать его напрямую по кнопке ниже:",
-            chat_id=status_msg.chat.id, 
-            message_id=status_msg.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        return
-
-    bot.edit_message_text("📥 Отправляю видео...", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    if tiktok_audio_url:
-        markup.add(InlineKeyboardButton("🎵 Скачать аудио (MP3)", url=tiktok_audio_url))
-    markup.add(share_button, monetization_button)
-
-    try:
-        bot.send_video(
-            message.chat.id, 
-            direct_url, 
-            caption="✅ Ваше видео успешно скачано!",
-            reply_markup=markup
-        )
-        bot.delete_message(chat_id=status_msg.chat.id, message_id=status_msg.message_id)
-    except Exception:
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🌐 Скачать файл", url=direct_url),
-            share_button,
-            monetization_button
-        )
-        bot.send_message(
-            message.chat.id,
-            "⚠️ Не удалось отправить файл напрямую. Скачайте его по ссылке:",
-            reply_markup=markup
-        )
+    else:
+        bot.edit_message_text("❌ Неподдерживаемая ссылка. Поддерживаются только TikTok и VK.", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
 
 if __name__ == "__main__":
     bot.infinity_polling()
