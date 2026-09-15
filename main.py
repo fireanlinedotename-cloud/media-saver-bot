@@ -1,8 +1,25 @@
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from yt_dlp import YoutubeDL
 
-# Безопасный забор токена из переменных Render
+# 1. Запускаем минимальный веб-сервер, чтобы Render Free Web Service не вылетал по таймауту портов
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Запускаем веб-сервер в отдельном потоке
+threading.Thread(target=run_web_server, daemon=True).start()
+
+# 2. Основная логика Telegram-бота
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
